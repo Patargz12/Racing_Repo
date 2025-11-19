@@ -6,11 +6,13 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 /**
  * Send a chat message to the backend (with optional files)
  * @param question - The user's question
+ * @param sessionId - Session ID for conversation persistence
  * @param files - Optional array of files to upload
  * @returns Promise with the bot's answer
  */
 export async function sendChatMessage(
   question: string,
+  sessionId: string,
   files?: File[]
 ): Promise<string> {
   try {
@@ -19,6 +21,9 @@ export async function sendChatMessage(
     
     // Always add the question field (even if empty) for multipart/form-data
     formData.append("question", question || "");
+    
+    // Add session ID for conversation persistence
+    formData.append("sessionId", sessionId);
 
     // Add the first file (we'll use single file for now, can be extended to multiple)
     if (files && files.length > 0) {
@@ -40,7 +45,12 @@ export async function sendChatMessage(
     if (axios.isAxiosError(error)) {
       const errorMessage =
         error.response?.data?.error || error.message || "Failed to get response";
-      throw new Error(errorMessage);
+      const errorDetails = error.response?.data?.details;
+      
+      // Create a custom error with details
+      const customError = new Error(errorMessage);
+      (customError as any).details = errorDetails;
+      throw customError;
     }
     throw error;
   }

@@ -1,15 +1,8 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { parseFile } = require("../utils/excel-parser");
 const chatModel = require("../models/chat.model");
+const sessionManager = require("../utils/session-manager");
 
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// Configure the model - Using Gemini 2.5 Flash
-const model = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash",
-});
-
+// Generation config for Gemini
 const generationConfig = {
   temperature: 1,
   topP: 0.95,
@@ -25,14 +18,23 @@ const generationConfig = {
  */
 exports.chat = async (req, res) => {
   try {
-    // Safely extract question from req.body (may be undefined with multipart/form-data)
+    // Extract request parameters
     const question = req.body?.question || "";
     const file = req.file; // File from multer
     const mode = req.body?.mode || "chat"; // 'chat' or 'explain'
+    const sessionId = req.body?.sessionId; // Session ID from frontend
 
     console.log("📦 Request body:", req.body);
     console.log("📎 File received:", file ? file.originalname : "No file");
     console.log("🎯 Mode:", mode);
+    console.log("🔑 Session ID:", sessionId || "No session ID provided");
+
+    // Validate session ID
+    if (!sessionId) {
+      return res.status(400).json({
+        error: "Session ID is required",
+      });
+    }
 
     // Validate input - either question or file is required
     if (!question && !file) {
@@ -61,6 +63,10 @@ exports.chat = async (req, res) => {
       );
     }
 
+    // Check if session exists
+    const existingSession = sessionManager.getSessionStats(sessionId);
+    const isNewSession = !existingSession;
+
     // Parse Excel file if provided
     let fileContext = "";
     if (file) {
@@ -78,7 +84,8 @@ exports.chat = async (req, res) => {
       }
     }
 
-    // Query MongoDB for relevant racing data based on the question
+    // Query MongoDB for relevant racing data
+    // Query on EVERY message to ensure we get the right collection for each question
     let mongoContext = "";
     let queryResults = null;
 
@@ -94,6 +101,11 @@ exports.chat = async (req, res) => {
               Object.keys(queryResults.results).length
             } collection(s)`
           );
+          console.log(
+            `📊 Collections queried: ${Object.keys(queryResults.results)
+              .map((k) => queryResults.results[k].collectionName)
+              .join(", ")}`
+          );
         } else {
           console.log(
             "ℹ️  No specific racing data found, using general knowledge"
@@ -108,102 +120,121 @@ exports.chat = async (req, res) => {
       }
     }
 
-    // Prepare the system prompt based on mode
+    // Prepare system prompt only for new sessions
     let systemPrompt = "";
 
-    if (mode === "explain") {
-      // Specialized AI Agent for Data Explanation
-      systemPrompt =
-        "You are an expert in Toyota Gazoo Racing analytics. You specialize in interpreting racing datasets, identifying patterns, and delivering concise insights. When given a file, you quickly summarize its structure, highlight key metrics, detect correlations, surface anomalies, and provide short, actionable observations. Your explanations are always brief, clear, and focused on what matters most for racing performance and strategy.\n\n";
+    if (isNewSession) {
+      if (mode === "explain") {
+        // Specialized AI Agent for Data Explanation
+        systemPrompt =
+          "You are an expert in Toyota Gazoo Racing analytics. You specialize in interpreting racing datasets, identifying patterns, and delivering concise insights. When given a file, you quickly summarize its structure, highlight key metrics, detect correlations, surface anomalies, and provide short, actionable observations. Your explanations are always brief, clear, and focused on what matters most for racing performance and strategy.\n\n";
 
-      systemPrompt += "When analyzing data, follow this structure:\n";
-      systemPrompt +=
-        "1. **Data Overview**: Briefly describe what the dataset contains\n";
-      systemPrompt +=
-        "2. **Key Metrics**: Highlight the most important numbers and values\n";
-      systemPrompt +=
-        "3. **Patterns & Insights**: Identify trends, correlations, or notable observations\n";
-      systemPrompt +=
-        "4. **Anomalies**: Point out any unusual or unexpected data points\n";
-      systemPrompt +=
-        "5. **Actionable Takeaways**: Provide brief, strategic recommendations\n\n";
-
-      if (fileContext) {
-        systemPrompt += `📊 DATASET TO ANALYZE:\n${fileContext}\n\n`;
-      }
-
-      if (mongoContext) {
-        systemPrompt += `📊 ADDITIONAL RACING DATA:\n${mongoContext}\n\n`;
-      }
-    } else {
-      // Regular chat mode
-      systemPrompt =
-        "You are a helpful assistant for Toyota Gazoo Racing. You help users understand racing data, performance statistics, and answer questions about Toyota's racing programs. Be informative, professional, and enthusiastic about motorsports.\n\n";
-
-      systemPrompt += "You have access to racing data from multiple sources:\n";
-      systemPrompt += "- Race results and standings (positions, times, gaps)\n";
-      systemPrompt += "- Lap times and performance data\n";
-      systemPrompt += "- Weather conditions during races\n";
-      systemPrompt += "- Vehicle and driver information\n";
-      systemPrompt += "- Analysis and endurance data\n\n";
-
-      if (mongoContext) {
-        systemPrompt += mongoContext;
-      }
-
-      if (fileContext) {
-        systemPrompt += `\n\n📊 ADDITIONAL CONTEXT FROM UPLOADED FILE:\n${fileContext}\n\nPlease use this data to answer the user's questions accurately. Reference specific data points from the file when relevant.`;
-      }
-
-      if (!mongoContext && !fileContext) {
+        systemPrompt += "When analyzing data, follow this structure:\n";
         systemPrompt +=
-          "Note: If asked about specific race data, answer based on your general knowledge of Toyota Gazoo Racing and motorsports.";
+          "1. **Data Overview**: Briefly describe what the dataset contains\n";
+        systemPrompt +=
+          "2. **Key Metrics**: Highlight the most important numbers and values\n";
+        systemPrompt +=
+          "3. **Patterns & Insights**: Identify trends, correlations, or notable observations\n";
+        systemPrompt +=
+          "4. **Anomalies**: Point out any unusual or unexpected data points\n";
+        systemPrompt +=
+          "5. **Actionable Takeaways**: Provide brief, strategic recommendations\n\n";
+
+        if (fileContext) {
+          systemPrompt += `📊 DATASET TO ANALYZE:\n${fileContext}\n\n`;
+        }
+
+        if (mongoContext) {
+          systemPrompt += `📊 ADDITIONAL RACING DATA:\n${mongoContext}\n\n`;
+        }
+      } else {
+        // Regular chat mode
+        systemPrompt =
+          "You are a helpful assistant for Toyota Gazoo Racing. You help users understand racing data, performance statistics, and answer questions about Toyota's racing programs. Be informative, professional, and enthusiastic about motorsports.\n\n";
+
+        systemPrompt +=
+          "You have access to racing data from multiple sources:\n";
+        systemPrompt +=
+          "- Race results and standings (positions, times, gaps)\n";
+        systemPrompt += "- Lap times and performance data\n";
+        systemPrompt += "- Weather conditions during races\n";
+        systemPrompt += "- Vehicle and driver information\n";
+        systemPrompt += "- Analysis and endurance data\n\n";
+
+        if (mongoContext) {
+          systemPrompt += mongoContext;
+        }
+
+        if (fileContext) {
+          systemPrompt += `\n\n📊 ADDITIONAL CONTEXT FROM UPLOADED FILE:\n${fileContext}\n\nPlease use this data to answer the user's questions accurately. Reference specific data points from the file when relevant.`;
+        }
+
+        if (!mongoContext && !fileContext) {
+          systemPrompt +=
+            "Note: If asked about specific race data, answer based on your general knowledge of Toyota Gazoo Racing and motorsports.";
+        }
       }
     }
 
-    // Create a chat session
-    const chatSession = model.startChat({
+    // Get or create session
+    const session = sessionManager.getOrCreateSession(sessionId, {
       generationConfig,
-      history: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: systemPrompt,
-            },
-          ],
-        },
-        {
-          role: "model",
-          parts: [
-            {
-              text:
-                mode === "explain"
-                  ? "Understood! I've received the racing dataset and I'm ready to provide a comprehensive analysis. I'll examine the data structure, identify key metrics, detect patterns, highlight anomalies, and deliver actionable insights focused on racing performance and strategy."
-                  : mongoContext || fileContext
-                  ? "Understood! I've received and analyzed the racing data. I'm ready to help you understand and answer questions about this data. What would you like to know?"
-                  : "Understood! I'm here to help with all things Toyota Gazoo Racing. Whether it's race results, driver performance, technical data, or general racing questions, I'm ready to assist. What would you like to know?",
-            },
-          ],
-        },
-      ],
+      systemPrompt,
+      mode,
+      mongoContext,
+      fileContext,
     });
 
-    // Prepare the user's message based on mode
+    // Prepare user message with context injection for existing sessions
     let userMessage = question;
-    if (mode === "explain" && !question) {
+
+    // For existing sessions, inject new MongoDB context or file context
+    if (!isNewSession) {
+      let contextInjection = "";
+
+      // Add MongoDB context if available
+      if (mongoContext) {
+        contextInjection += `[New racing data retrieved for your question]\n\n${mongoContext}\n\n`;
+      }
+
+      // Add file context if available
+      if (fileContext) {
+        contextInjection += `[New file uploaded: ${file.originalname}]\n\nFile content:\n${fileContext}\n\n`;
+      }
+
+      // Combine context with user question
+      if (contextInjection) {
+        userMessage = `${contextInjection}User question: ${
+          question || "Please analyze this data."
+        }`;
+      }
+    }
+    // For new sessions with special modes
+    else if (mode === "explain" && !question) {
       userMessage =
         "Please analyze this racing dataset and provide a comprehensive explanation following the structured format. Include: data overview, key metrics, patterns & insights, anomalies, and actionable takeaways. Make sure your explanation is short and simple";
-    } else if (!question) {
+    } else if (!question && fileContext) {
       userMessage =
         "Please analyze the uploaded file and provide insights. Make sure your explanation is short and simple.";
     }
 
-    // Send the user's question
-    const result = await chatSession.sendMessage(userMessage);
+    // Send the user's question to the existing chat session
+    const result = await session.chatSession.sendMessage(userMessage);
     const answer = result.response.text();
 
+    // Increment message count
+    sessionManager.incrementMessageCount(sessionId);
+
+    // Get session stats for response
+    const sessionStats = sessionManager.getSessionStats(sessionId);
+
     console.log(`✅ Generated response: ${answer.substring(0, 100)}...`);
+    console.log(
+      `📊 Session stats - Messages: ${
+        sessionStats.messageCount
+      }, Age: ${Math.round((Date.now() - sessionStats.createdAt) / 60000)} min`
+    );
 
     // Send response
     res.json({
@@ -217,6 +248,11 @@ exports.chat = async (req, res) => {
             (key) => queryResults.results[key].collectionName
           )
         : [],
+      sessionInfo: {
+        sessionId,
+        messageCount: sessionStats.messageCount,
+        isNewSession,
+      },
     });
   } catch (error) {
     console.error("❌ Chat error:", error);

@@ -85,7 +85,7 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-slate-50 via-white to-slate-100">
+    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-black to-gray-900">
       <AdminNavbar />
 
       <main className="pt-24 pb-12 px-6">

@@ -11,12 +11,26 @@ class ChatModel {
 
     // Define collection mappings for different data types
     this.collectionMap = {
+      // Results and Standings
       provisionalResults1: "Provisional_Results_Race_1",
+      provisionalResultsClass01: "Provisional_Results_Class_Race_01",
+      resultsGRCup01: "Results_GR_Cup_Race_01",
+      resultsByClassGRCup01: "Results_By_Class_GR_CUP_Race_01",
+
+      // Lap Times and Performance
       bestLaps1: "Best_Laps_Race_1",
+      best10LapsByDriver1: "Best_10_Laps_By_Driver_1",
       lapTime1: "Lap_Time_Race_1",
+      roadAmericaLapTimeR1: "road_america_lap_time_R1",
+      roadAmericaLapStartR1: "road_america_lap_start_R1",
+      roadAmericaLapEndR1: "road_america_lap_end_R1",
+
+      // Weather
       weather1: "Weather_Race_1",
+
+      // Analysis
       analysis: "Analysis_Endurance",
-      // Add more collections as needed
+      analysisWithSections: "Analysis_Endurance_With_Sections",
     };
   }
 
@@ -75,31 +89,100 @@ class ChatModel {
     // Determine which collections to query based on keywords
     const collectionsToQuery = [];
 
+    // Explicit collection name detection (when users mention specific collection names)
+    const collectionNameMap = {
+      results_gr_cup_race_01: "resultsGRCup01",
+      "results gr cup": "resultsGRCup01",
+      provisional_results_race_1: "provisionalResults1",
+      "provisional results": "provisionalResults1",
+      best_10_laps_by_driver: "best10LapsByDriver1",
+      "best 10 laps by driver": "best10LapsByDriver1",
+      results_by_class: "resultsByClassGRCup01",
+      provisional_results_class: "provisionalResultsClass01",
+      weather_race_1: "weather1",
+      analysis_endurance: "analysis",
+      analysis_endurance_with_sections: "analysisWithSections",
+      road_america: "roadAmericaLapTimeR1",
+    };
+
+    // Check if user explicitly mentioned a collection name
+    for (const [pattern, collectionKey] of Object.entries(collectionNameMap)) {
+      if (lowerQuestion.includes(pattern)) {
+        if (!collectionsToQuery.includes(collectionKey)) {
+          collectionsToQuery.push(collectionKey);
+          console.log(
+            `🎯 Detected explicit collection mention: ${pattern} → ${collectionKey}`
+          );
+        }
+      }
+    }
+
+    // Best 10 laps by driver keywords (specific collection)
+    if (
+      /best\s*(10|ten)?\s*laps?\s*(by\s*driver|driver)/i.test(lowerQuestion)
+    ) {
+      if (!collectionsToQuery.includes("best10LapsByDriver1")) {
+        collectionsToQuery.push("best10LapsByDriver1");
+      }
+    }
+
     // Position/Results keywords
     if (
-      /position|standing|result|winner|ranking|place|pos/i.test(lowerQuestion)
+      /position|standing|result|winner|ranking|place|pos|classified/i.test(
+        lowerQuestion
+      )
     ) {
-      collectionsToQuery.push("provisionalResults1");
+      ["provisionalResults1", "resultsGRCup01"].forEach((col) => {
+        if (!collectionsToQuery.includes(col)) collectionsToQuery.push(col);
+      });
+    }
+
+    // Results by class keywords
+    if (/class|gr\s*cup|division/i.test(lowerQuestion)) {
+      ["resultsByClassGRCup01", "provisionalResultsClass01"].forEach((col) => {
+        if (!collectionsToQuery.includes(col)) collectionsToQuery.push(col);
+      });
     }
 
     // Lap time keywords
     if (/lap|time|fastest|slowest|best lap|lap time/i.test(lowerQuestion)) {
-      collectionsToQuery.push("bestLaps1", "lapTime1");
+      ["bestLaps1", "lapTime1"].forEach((col) => {
+        if (!collectionsToQuery.includes(col)) collectionsToQuery.push(col);
+      });
+    }
+
+    // Road America specific data
+    if (/road\s*america|lap\s*start|lap\s*end/i.test(lowerQuestion)) {
+      [
+        "roadAmericaLapTimeR1",
+        "roadAmericaLapStartR1",
+        "roadAmericaLapEndR1",
+      ].forEach((col) => {
+        if (!collectionsToQuery.includes(col)) collectionsToQuery.push(col);
+      });
     }
 
     // Weather keywords
-    if (/weather|temperature|rain|wind|condition/i.test(lowerQuestion)) {
-      collectionsToQuery.push("weather1");
+    if (
+      /weather|temperature|rain|wind|condition|humidity|pressure/i.test(
+        lowerQuestion
+      )
+    ) {
+      if (!collectionsToQuery.includes("weather1")) {
+        collectionsToQuery.push("weather1");
+      }
     }
 
     // Analysis keywords
-    if (/analysis|endurance|performance/i.test(lowerQuestion)) {
-      collectionsToQuery.push("analysis");
+    if (/analysis|endurance|performance|section/i.test(lowerQuestion)) {
+      ["analysis", "analysisWithSections"].forEach((col) => {
+        if (!collectionsToQuery.includes(col)) collectionsToQuery.push(col);
+      });
     }
 
     // If no specific collections identified, query results as default
     if (collectionsToQuery.length === 0) {
-      collectionsToQuery.push("provisionalResults1");
+      collectionsToQuery.push("provisionalResults1", "resultsGRCup01");
     }
 
     // Extract filters from the question
@@ -173,7 +256,11 @@ class ChatModel {
           // Build query based on filters
           const query = {};
           if (analysis.filters.POS) {
-            query.POS = analysis.filters.POS;
+            // Some collections use POS, others use POSITION
+            query.$or = [
+              { POS: analysis.filters.POS },
+              { POSITION: analysis.filters.POS },
+            ];
           }
           if (analysis.filters.NUMBER) {
             query.NUMBER = analysis.filters.NUMBER;
@@ -185,14 +272,33 @@ class ChatModel {
           // Execute query with sorting (if applicable)
           let cursor = collection.find(query).limit(limit);
 
-          // Sort by position for results, by time for laps
-          if (collectionKey === "provisionalResults1") {
-            cursor = cursor.sort({ POS: 1 });
-          } else if (
+          // Sort by position for results collections
+          if (
+            collectionKey === "provisionalResults1" ||
+            collectionKey === "resultsGRCup01" ||
+            collectionKey === "provisionalResultsClass01" ||
+            collectionKey === "resultsByClassGRCup01"
+          ) {
+            cursor = cursor.sort({ POS: 1, POSITION: 1 });
+          }
+          // Sort by NUMBER for driver-specific collections
+          else if (collectionKey === "best10LapsByDriver1") {
+            cursor = cursor.sort({ NUMBER: 1 });
+          }
+          // Sort by time for lap time collections
+          else if (
             collectionKey === "bestLaps1" ||
-            collectionKey === "lapTime1"
+            collectionKey === "lapTime1" ||
+            collectionKey === "roadAmericaLapTimeR1"
           ) {
             cursor = cursor.sort({ TIME: 1 });
+          }
+          // Sort by timestamp for road america start/end
+          else if (
+            collectionKey === "roadAmericaLapStartR1" ||
+            collectionKey === "roadAmericaLapEndR1"
+          ) {
+            cursor = cursor.sort({ timestamp: 1 });
           }
 
           const data = await cursor.toArray();

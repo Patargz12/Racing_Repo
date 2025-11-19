@@ -5,11 +5,21 @@ import { useChatStore, type Message } from "@/app/lib/chat-store";
 import { sendChatMessage } from "@/app/lib/chat-api";
 import { ChatHeader } from "@/app/components/chat-header";
 import { ChatMessage } from "@/app/components/chat-message";
-import { ChatInput } from "@/app/components/chat-input";
 import { RecommendedQuestions } from "@/app/components/recommended-search";
+import {
+  PromptInput,
+  PromptInputTextarea,
+  PromptInputFooter,
+  PromptInputTools,
+  PromptInputButton,
+  PromptInputSubmit,
+  PromptInputAttachments,
+  PromptInputAttachment,
+} from "@/components/ai-elements/prompt-input";
+import { Paperclip } from "lucide-react";
 
 export function ChatContainer() {
-  const { messages, addMessage, removeLastMessage } = useChatStore();
+  const { messages, addMessage, removeLastMessage, getOrCreateSessionId, clearSession } = useChatStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [visibleMessages, setVisibleMessages] = useState<Set<string>>(
@@ -43,18 +53,33 @@ export function ChatContainer() {
   // Check if chatbot is currently typing (has a loading message)
   const isChatbotTyping = messages.some(message => message.sender === "bot" && message.isLoading);
 
-  const handleSendMessage = async (content: string, files?: File[]) => {
+  const handleSendMessage = async (message: { text: string; files?: any[] }) => {
     // Prevent sending if already loading or chatbot is typing
-    if (isLoading || isChatbotTyping) {
+    if (isLoading || isChatbotTyping || (!message.text.trim() && (!message.files || message.files.length === 0))) {
       return;
     }
 
+    // Convert files from Prompt Kit format to File objects
+    const files: File[] | undefined = message.files?.length
+      ? await Promise.all(
+          message.files.map(async (file: any) => {
+            // If file has a blob URL, fetch and convert to File
+            if (file.url?.startsWith("blob:")) {
+              const response = await fetch(file.url);
+              const blob = await response.blob();
+              return new File([blob], file.filename || "file", { type: file.mediaType || blob.type });
+            }
+            return null;
+          })
+        ).then((results) => results.filter((f): f is File => f !== null))
+      : undefined;
+
     // Create user message content with file information if present
-    let messageContent = content;
+    let messageContent = message.text;
     if (files && files.length > 0) {
       const fileNames = files.map((f) => f.name).join(", ");
-      messageContent = content
-        ? `${content}\n\n📎 Attached: ${fileNames}`
+      messageContent = message.text
+        ? `${message.text}\n\n📎 Attached: ${fileNames}`
         : `📎 Attached: ${fileNames}`;
     }
 
@@ -74,8 +99,11 @@ export function ChatContainer() {
     setIsLoading(true);
 
     try {
+      // Get or create session ID for conversation persistence
+      const sessionId = getOrCreateSessionId();
+      
       // Call the backend API (with files if needed)
-      const answer = await sendChatMessage(content, files);
+      const answer = await sendChatMessage(message.text, sessionId, files);
 
       // Remove loading message
       removeLastMessage();
@@ -89,11 +117,17 @@ export function ChatContainer() {
       // Remove loading message
       removeLastMessage();
 
-      // Add error message
-      const errorMessage =
+      // Add error message with details
+      let errorMessage =
         error instanceof Error
           ? error.message
           : "Sorry, I encountered an error. Please try again.";
+      
+      // Include error details if available
+      const errorDetails = (error as any)?.details;
+      if (errorDetails) {
+        errorMessage += `\n\n**Details:** ${errorDetails}`;
+      }
 
       addMessage({
         content: `❌ ${errorMessage}`,
@@ -102,6 +136,10 @@ export function ChatContainer() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleQuestionClick = async (questionText: string) => {
+    await handleSendMessage({ text: questionText });
   };
 
   const handleCopyMessage = (text: string) => {
@@ -113,9 +151,9 @@ export function ChatContainer() {
   const handleClearHistory = () => {
     if (
       typeof window !== "undefined" &&
-      window.confirm("Clear all chat history?")
+      window.confirm("Clear all chat history? This will start a new conversation session.")
     ) {
-      useChatStore.getState().clearMessages();
+      clearSession();
     }
   };
 
@@ -142,7 +180,7 @@ export function ChatContainer() {
         <div className="w-full max-w-4xl">
           {messages.length === 0 ? (
             // Show recommended questions when there are no messages
-            <RecommendedQuestions onQuestionClick={handleSendMessage} />
+            <RecommendedQuestions onQuestionClick={handleQuestionClick} />
           ) : (
             // Show chat messages when conversation has started
             <div className="space-y-6">
@@ -164,7 +202,51 @@ export function ChatContainer() {
         </div>
       </div>
 
-      <ChatInput onSend={handleSendMessage} isLoading={isLoading || isChatbotTyping} />
+      <div className="w-full px-4 py-6 flex justify-center">
+        <div className="w-full max-w-4xl">
+          <PromptInput
+            onSubmit={async (message) => {
+              await handleSendMessage(message);
+            }}
+            accept=".xlsx,.xls,.csv"
+            multiple
+            maxFiles={10}
+            globalDrop
+          >
+            <PromptInputAttachments>
+              {(attachment) => <PromptInputAttachment data={attachment} />}
+            </PromptInputAttachments>
+            <PromptInputTextarea 
+              placeholder="Type a message or drop files..." 
+              className="resize-none overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full"
+              style={{
+                minHeight: '48px',
+                maxHeight: '140px',
+                fieldSizing: 'content'
+              } as any}
+            />
+            <PromptInputFooter>
+              <PromptInputTools>
+                <PromptInputButton
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const fileInput = document.querySelector(
+                      'input[type="file"]'
+                    ) as HTMLInputElement;
+                    fileInput?.click();
+                  }}
+                >
+                  <Paperclip className="size-4" />
+                </PromptInputButton>
+              </PromptInputTools>
+              <PromptInputSubmit
+                disabled={isLoading || isChatbotTyping}
+                status={isLoading || isChatbotTyping ? "submitted" : undefined}
+              />
+            </PromptInputFooter>
+          </PromptInput>
+        </div>
+      </div>
     </div>
   );
 }
