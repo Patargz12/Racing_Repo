@@ -7,8 +7,42 @@ const chatRoutes = require("./routes/chat.route");
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// CORS configuration for production
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    // Allowed origins
+    const allowedOrigins = [
+      'http://localhost:3000',           // Local frontend development
+      'http://localhost:5173',           // Alternative local port
+      process.env.FRONTEND_URL,          // Production frontend URL from env
+      /\.vercel\.app$/,                  // All Vercel preview deployments
+    ].filter(Boolean); // Remove undefined values
+    
+    // Check if origin is allowed
+    const isAllowed = allowedOrigins.some(allowed => {
+      if (allowed instanceof RegExp) {
+        return allowed.test(origin);
+      }
+      return allowed === origin;
+    });
+    
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS blocked origin: ${origin}`);
+      callback(null, true); // Allow anyway but log warning (change to false for strict mode)
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" })); // For form data
 

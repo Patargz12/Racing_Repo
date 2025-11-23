@@ -1,15 +1,13 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Toyota Hackathon Backend API",
+  "main": "server.js",
   "scripts": {
-    "build": "next build",
-    "dev": "next dev",
-    "lint": "eslint .",
-    "start": "next start",
-    "server": "node server.js",
-    "dev:all": "concurrently \"npm run dev\" \"npm run\""
+    "start": "node server.js",
+    "build": "echo 'No build step required for Express backend'",
+    "dev": "node server.js",
+    "test": "echo \"No tests specified\" && exit 0"
   },
   "keywords": [],
   "author": "",
@@ -23,5 +21,8 @@
     "multer": "^2.0.2",
     "openai": "^6.9.1",
     "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

@@ -8,8 +8,10 @@ class ChatModel {
   constructor() {
     this.mongoUri = process.env.MONGODB_URI;
     this.databaseName = "excel_converter";
+    this.registryCollectionName = "_collection_registry";
 
     // Define collection mappings for different data types
+    // This is kept for backward compatibility with existing collections
     this.collectionMap = {
       // Results and Standings
       provisionalResults1: "Provisional_Results_Race_1",
@@ -35,11 +37,70 @@ class ChatModel {
   }
 
   /**
+   * Fetch all registered collections from the metadata registry
+   * @param {MongoClient} client - MongoDB client
+   * @returns {Array} - Array of registry entries
+   */
+  async getRegisteredCollections(client) {
+    try {
+      const database = client.db(this.databaseName);
+      const registry = database.collection(this.registryCollectionName);
+
+      // Fetch all registry entries
+      const registeredCollections = await registry.find({}).toArray();
+
+      return registeredCollections;
+    } catch (error) {
+      console.log(
+        "⚠️  Could not fetch registry (might not exist yet):",
+        error.message
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Find relevant collections based on question keywords
+   * Combines static collection map with dynamic registry
+   * @param {string} question - User's question
+   * @param {Array} registeredCollections - Collections from registry
+   * @returns {Array} - Array of collection names to query
+   */
+  findRelevantCollectionsFromRegistry(question, registeredCollections) {
+    const lowerQuestion = question.toLowerCase();
+    const matches = [];
+
+    // Match against registered collections
+    for (const regEntry of registeredCollections) {
+      // Check if any keyword from the collection matches the question
+      const keywordMatch = regEntry.keywords.some((keyword) =>
+        lowerQuestion.includes(keyword)
+      );
+
+      if (keywordMatch) {
+        matches.push({
+          collectionName: regEntry.collectionName,
+          dataType: regEntry.dataType,
+          score: 1, // Could be enhanced with better scoring
+        });
+        console.log(
+          `🎯 Registry match: "${
+            regEntry.collectionName
+          }" (keywords: ${regEntry.keywords.join(", ")})`
+        );
+      }
+    }
+
+    return matches;
+  }
+
+  /**
    * Analyze the user's question to determine intent and relevant collections
    * @param {string} question - User's question
+   * @param {Array} registeredCollections - Collections from registry (optional)
    * @returns {Object} Analysis result with intent, collections to query, and filters
    */
-  analyzeQuestionIntent(question) {
+  analyzeQuestionIntent(question, registeredCollections = []) {
     const lowerQuestion = question.toLowerCase();
 
     // Define intent patterns
@@ -88,6 +149,28 @@ class ChatModel {
 
     // Determine which collections to query based on keywords
     const collectionsToQuery = [];
+
+    // PRIORITY 1: Check registry for dynamically uploaded collections
+    if (registeredCollections.length > 0) {
+      const registryMatches = this.findRelevantCollectionsFromRegistry(
+        question,
+        registeredCollections
+      );
+
+      if (registryMatches.length > 0) {
+        // Add registry matches to collections to query
+        registryMatches.forEach((match) => {
+          if (!collectionsToQuery.includes(match.collectionName)) {
+            collectionsToQuery.push(match.collectionName);
+            console.log(
+              `✅ Added from registry: ${match.collectionName} (type: ${match.dataType})`
+            );
+          }
+        });
+      }
+    }
+
+    // PRIORITY 2: Static collection matching (backward compatibility)
 
     // Explicit collection name detection (when users mention specific collection names)
     const collectionNameMap = {
@@ -232,18 +315,37 @@ class ChatModel {
     const client = new MongoClient(this.mongoUri);
 
     try {
-      // Analyze the question to determine what to query
-      const analysis = this.analyzeQuestionIntent(question);
-
       await client.connect();
       const database = client.db(this.databaseName);
+
+      // Fetch registered collections from registry
+      const registeredCollections = await this.getRegisteredCollections(client);
+
+      console.log(
+        `📋 Found ${registeredCollections.length} registered collection(s) in registry`
+      );
+
+      // Analyze the question to determine what to query
+      const analysis = this.analyzeQuestionIntent(
+        question,
+        registeredCollections
+      );
 
       const results = {};
       let hasData = false;
 
       // Query each relevant collection
       for (const collectionKey of analysis.collectionsToQuery) {
-        const collectionName = this.collectionMap[collectionKey];
+        // Check if this is a static collection key or a direct collection name
+        let collectionName;
+
+        if (this.collectionMap[collectionKey]) {
+          // Static collection from collectionMap
+          collectionName = this.collectionMap[collectionKey];
+        } else {
+          // Direct collection name from registry
+          collectionName = collectionKey;
+        }
 
         if (!collectionName) {
           console.log(`⚠️  Collection mapping not found for: ${collectionKey}`);
@@ -272,7 +374,8 @@ class ChatModel {
           // Execute query with sorting (if applicable)
           let cursor = collection.find(query).limit(limit);
 
-          // Sort by position for results collections
+          // Sort based on collection type
+          // For static collections, use existing logic
           if (
             collectionKey === "provisionalResults1" ||
             collectionKey === "resultsGRCup01" ||
@@ -280,25 +383,35 @@ class ChatModel {
             collectionKey === "resultsByClassGRCup01"
           ) {
             cursor = cursor.sort({ POS: 1, POSITION: 1 });
-          }
-          // Sort by NUMBER for driver-specific collections
-          else if (collectionKey === "best10LapsByDriver1") {
+          } else if (collectionKey === "best10LapsByDriver1") {
             cursor = cursor.sort({ NUMBER: 1 });
-          }
-          // Sort by time for lap time collections
-          else if (
+          } else if (
             collectionKey === "bestLaps1" ||
             collectionKey === "lapTime1" ||
             collectionKey === "roadAmericaLapTimeR1"
           ) {
             cursor = cursor.sort({ TIME: 1 });
-          }
-          // Sort by timestamp for road america start/end
-          else if (
+          } else if (
             collectionKey === "roadAmericaLapStartR1" ||
             collectionKey === "roadAmericaLapEndR1"
           ) {
             cursor = cursor.sort({ timestamp: 1 });
+          } else {
+            // For dynamic collections from registry, use intelligent sorting
+            const registryEntry = registeredCollections.find(
+              (r) => r.collectionName === collectionName
+            );
+
+            if (registryEntry) {
+              // Sort based on data type
+              if (registryEntry.dataType === "results") {
+                cursor = cursor.sort({ POS: 1, POSITION: 1 });
+              } else if (registryEntry.dataType === "lap_times") {
+                cursor = cursor.sort({ TIME: 1, LAP: 1 });
+              } else if (registryEntry.columns.includes("timestamp")) {
+                cursor = cursor.sort({ timestamp: 1 });
+              }
+            }
           }
 
           const data = await cursor.toArray();

@@ -54,8 +54,47 @@ class UploadController {
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    */
-  healthCheck(req, res) {
-    res.json({ status: "ok", message: "Express server is running" });
+  /**
+   * Health check endpoint for monitoring
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   */
+  async healthCheck(req, res) {
+    try {
+      const health = {
+        status: "ok",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV || "development",
+      };
+
+      // Check MongoDB connection if URI is available
+      if (process.env.MONGODB_URI) {
+        try {
+          const { MongoClient } = require('mongodb');
+          const client = new MongoClient(process.env.MONGODB_URI);
+          await client.connect();
+          const db = client.db("excel_converter");
+          const collections = await db.listCollections().toArray();
+          health.mongodb = "connected";
+          health.collections = collections.length;
+          await client.close();
+        } catch (dbError) {
+          health.mongodb = "error";
+          health.mongodbError = dbError.message;
+        }
+      } else {
+        health.mongodb = "not configured";
+      }
+
+      res.status(200).json(health);
+    } catch (error) {
+      res.status(503).json({
+        status: "error",
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      });
+    }
   }
 }
 
