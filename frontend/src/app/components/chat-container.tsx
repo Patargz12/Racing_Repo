@@ -53,16 +53,19 @@ export function ChatContainer() {
   // Check if chatbot is currently typing (has a loading message)
   const isChatbotTyping = messages.some(message => message.sender === "bot" && message.isLoading);
 
-  const handleSendMessage = async (message: { text: string; files?: any[] }) => {
+  const handleSendMessage = async (message?: any) => {
     // Prevent sending if already loading or chatbot is typing
-    if (isLoading || isChatbotTyping || (!message.text.trim() && (!message.files || message.files.length === 0))) {
+    const text = message?.text || "";
+    const files = message?.files;
+    
+    if (!message || isLoading || isChatbotTyping || (!text.trim() && (!files || files.length === 0))) {
       return;
     }
 
     // Convert files from Prompt Kit format to File objects
-    const files: File[] | undefined = message.files?.length
+    const processedFiles: File[] | undefined = files?.length
       ? await Promise.all(
-          message.files.map(async (file: any) => {
+          files.map(async (file: any) => {
             // If file has a blob URL, fetch and convert to File
             if (file.url?.startsWith("blob:")) {
               const response = await fetch(file.url);
@@ -75,11 +78,11 @@ export function ChatContainer() {
       : undefined;
 
     // Create user message content with file information if present
-    let messageContent = message.text;
-    if (files && files.length > 0) {
-      const fileNames = files.map((f) => f.name).join(", ");
-      messageContent = message.text
-        ? `${message.text}\n\n📎 Attached: ${fileNames}`
+    let messageContent = text;
+    if (processedFiles && processedFiles.length > 0) {
+      const fileNames = processedFiles.map((f) => f.name).join(", ");
+      messageContent = messageContent
+        ? `${messageContent}\n\n📎 Attached: ${fileNames}`
         : `📎 Attached: ${fileNames}`;
     }
 
@@ -103,7 +106,7 @@ export function ChatContainer() {
       const sessionId = getOrCreateSessionId();
       
       // Call the backend API (with files if needed)
-      const answer = await sendChatMessage(message.text, sessionId, files);
+      const answer = await sendChatMessage(messageContent, sessionId, processedFiles);
 
       // Remove loading message
       removeLastMessage();
@@ -157,25 +160,20 @@ export function ChatContainer() {
     }
   };
 
-  const handleToggleDarkMode = () => {
-    if (typeof window !== "undefined") {
-      const html = document.documentElement;
-      if (html.classList.contains("dark")) {
-        html.classList.remove("dark");
-      } else {
-        html.classList.add("dark");
-      }
-    }
-  };
-
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground">
-      <ChatHeader
-        onClearHistory={handleClearHistory}
-        onToggleDarkMode={handleToggleDarkMode}
-      />
+    <div className="relative flex flex-col h-screen text-foreground overflow-hidden">
+      {/* Toyota Gazoo Racing gradient background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-[#2d0a0f] via-[#1a0508] to-black pointer-events-none" />
+      
+      {/* Additional red glow overlay for depth */}
+      <div className="absolute top-0 left-0 w-1/2 h-1/2 bg-gradient-radial from-racing-red/20 via-racing-red/5 to-transparent pointer-events-none blur-3xl" />
+      
+      {/* Content */}
+      <div className="relative z-10">
+        <ChatHeader onClearHistory={handleClearHistory} />
+      </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col items-center px-4 py-8">
+      <div className="relative z-10 flex-1 overflow-y-auto custom-scrollbar flex flex-col items-center px-4 py-8">
         {/* Centered container with max-width */}
         <div className="w-full max-w-4xl">
           {messages.length === 0 ? (
@@ -202,7 +200,7 @@ export function ChatContainer() {
         </div>
       </div>
 
-      <div className="w-full px-4 py-6 flex justify-center">
+      <div className="relative z-10 w-full px-4 py-6 flex justify-center">
         <div className="w-full max-w-4xl">
           <PromptInput
             onSubmit={async (message) => {

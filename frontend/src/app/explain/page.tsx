@@ -1,10 +1,19 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import Image from "next/image";
 import Link from "next/link";
 import { Streamdown } from "streamdown";
+import {
+  PromptInput,
+  PromptInputTextarea,
+  PromptInputFooter,
+  PromptInputSubmit,
+} from "@/components/ai-elements/prompt-input";
+
+// Get the API URL from environment variable or use localhost
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 
 interface ExcelData {
   headers: string[];
@@ -16,6 +25,106 @@ interface ErrorResponse {
   details?: string;
 }
 
+interface Message {
+  id: string;
+  content: string;
+  sender: "user" | "bot";
+  timestamp: Date;
+  isLoading?: boolean;
+}
+
+// Generate a unique session ID
+function generateSessionId(): string {
+  return `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+// Custom hook for typing animation (same as chat-message.tsx)
+function useTypingAnimation(
+  text: string,
+  speed: number = 1,
+  charsPerInterval: number = 3
+) {
+  const [displayedText, setDisplayedText] = useState("");
+  const [isComplete, setIsComplete] = useState(false);
+
+  useEffect(() => {
+    setDisplayedText("");
+    setIsComplete(false);
+    let currentIndex = 0;
+
+    const timer = setInterval(() => {
+      if (currentIndex < text.length) {
+        // Add multiple characters at once for faster rendering
+        const nextIndex = Math.min(
+          currentIndex + charsPerInterval,
+          text.length
+        );
+        setDisplayedText(text.slice(0, nextIndex));
+        currentIndex = nextIndex;
+      } else {
+        setIsComplete(true);
+        clearInterval(timer);
+      }
+    }, speed);
+
+    return () => clearInterval(timer);
+  }, [text, speed, charsPerInterval]);
+
+  return { displayedText, isComplete };
+}
+
+// Message component with streaming effect
+function StreamingMessage({ message }: { message: Message }) {
+  const isUser = message.sender === "user";
+  
+  // Use typing animation for bot messages (ChatGPT-like speed)
+  const { displayedText } = useTypingAnimation(
+    isUser ? "" : message.content,
+    15, // 15ms interval
+    5 // 5 characters per interval = very fast like ChatGPT
+  );
+
+  const contentToDisplay = isUser ? message.content : displayedText;
+
+  return (
+    <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+      {/* Avatar */}
+      <div
+        className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
+          isUser
+            ? "bg-[#EB0A1E] text-white shadow-[0_0_15px_rgba(235,10,30,0.5)]"
+            : "bg-gray-800 text-gray-100 border-2 border-[#EB0A1E]/30"
+        }`}
+      >
+        {isUser ? "U" : "T"}
+      </div>
+
+      {/* Message Bubble */}
+      <div
+        className={`max-w-[80%] rounded-lg p-4 ${
+          message.sender === "user"
+            ? "bg-[#EB0A1E] text-white shadow-[0_0_15px_rgba(235,10,30,0.3)]"
+            : "bg-gray-800 text-gray-100 border border-gray-700"
+        }`}
+      >
+        {message.isLoading ? (
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
+            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+          </div>
+        ) : (
+          <div className="prose prose-invert prose-sm max-w-none">
+            <Streamdown className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+              {contentToDisplay}
+            </Streamdown>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ExplainPage() {
   const [excelData, setExcelData] = useState<ExcelData | null>(null);
   const [fileName, setFileName] = useState<string>("");
@@ -24,7 +133,29 @@ export default function ExplainPage() {
   const [dragActive, setDragActive] = useState<boolean>(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [errorInfo, setErrorInfo] = useState<ErrorResponse | null>(null);
+  const [sessionId, setSessionId] = useState<string>("");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
+  const [isExplanationStreaming, setIsExplanationStreaming] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Typing animation for the initial explanation
+  const { displayedText: streamedExplanation, isComplete: isExplanationComplete } = useTypingAnimation(
+    explanation,
+    15, // 15ms interval
+    5 // 5 characters per interval
+  );
+
+  // Initialize session ID on mount
+  useEffect(() => {
+    setSessionId(generateSessionId());
+  }, []);
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   // Handle file upload
   const handleFileUpload = (file: File) => {
@@ -97,12 +228,14 @@ export default function ExplainPage() {
     setIsLoading(true);
     setExplanation(""); // Clear previous explanation
     setErrorInfo(null); // Clear previous errors
+    setMessages([]); // Clear chat messages
 
     try {
       // Create FormData to send file to backend
       const formData = new FormData();
       formData.append("file", uploadedFile);
       formData.append("mode", "explain");
+      formData.append("sessionId", sessionId); // Add session ID
 
       // Call backend API
       const response = await fetch("http://localhost:4000/api/chat", {
@@ -148,8 +281,95 @@ export default function ExplainPage() {
     setExplanation("");
     setUploadedFile(null);
     setErrorInfo(null);
+    setMessages([]);
+    setSessionId(generateSessionId()); // Generate new session ID
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+  };
+
+  // Handle follow-up chat messages
+  const handleSendMessage = async (message?: any) => {
+    const text = message?.text || "";
+    if (isChatLoading || !text.trim()) {
+      return;
+    }
+
+    // Add user message
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      content: text,
+      sender: "user",
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, userMessage]);
+
+    // Add loading message for bot
+    const loadingMessage: Message = {
+      id: (Date.now() + 1).toString(),
+      content: "",
+      sender: "bot",
+      timestamp: new Date(),
+      isLoading: true,
+    };
+    setMessages((prev) => [...prev, loadingMessage]);
+
+    setIsChatLoading(true);
+
+    try {
+      // Create FormData to send question
+      const formData = new FormData();
+      formData.append("question", text);
+      formData.append("sessionId", sessionId);
+
+      // Call backend API
+      const response = await fetch(`${API_URL}/chat`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      // Remove loading message
+      setMessages((prev) => prev.filter((m) => !m.isLoading));
+
+      if (response.ok && result.success && result.answer) {
+        // Add bot response
+        const botMessage: Message = {
+          id: Date.now().toString(),
+          content: result.answer,
+          sender: "bot",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, botMessage]);
+      } else {
+        // Add error message
+        const errorMessage: Message = {
+          id: Date.now().toString(),
+          content: `❌ ${result.error || "Failed to get response"}`,
+          sender: "bot",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+      }
+    } catch (error) {
+      // Remove loading message
+      setMessages((prev) => prev.filter((m) => !m.isLoading));
+
+      // Add error message
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        content: `❌ ${
+          error instanceof Error
+            ? error.message
+            : "Failed to connect to the server"
+        }`,
+        sender: "bot",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsChatLoading(false);
     }
   };
 
@@ -181,9 +401,9 @@ export default function ExplainPage() {
             </h1>
           </div>
           <Link href="/">
-            <button className="px-6 py-3 bg-gray-800 hover:bg-gray-700 rounded-md transition-all duration-300 border border-gray-700 hover:border-[#EB0A1E] flex items-center gap-2">
+            <button className="group relative px-8 py-3 bg-[#EB0A1E] rounded-md transition-all duration-300 hover:bg-[#c40818] hover:scale-105 active:scale-100 hover:shadow-[0_0_30px_rgba(235,10,30,0.8)] flex items-center gap-3">
               <svg
-                className="w-5 h-5"
+                className="w-5 h-5 text-white"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
@@ -195,7 +415,7 @@ export default function ExplainPage() {
                   d="M10 19l-7-7m0 0l7-7m-7 7h18"
                 />
               </svg>
-              <span>Back</span>
+              <span className="text-white font-bold uppercase tracking-wide">Back</span>
             </button>
           </Link>
         </div>
@@ -294,7 +514,7 @@ export default function ExplainPage() {
             </div>
 
             <div className="bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden">
-              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <div className="overflow-x-auto max-h-96 overflow-y-auto [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-gray-900/50 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gradient-to-b [&::-webkit-scrollbar-thumb]:from-[#EB0A1E] [&::-webkit-scrollbar-thumb]:to-[#c40818] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-gray-900 hover:[&::-webkit-scrollbar-thumb]:shadow-[0_0_10px_rgba(235,10,30,0.8)]">
                 <table className="w-full">
                   <thead className="bg-gray-900 sticky top-0 z-10">
                     <tr>
@@ -412,11 +632,58 @@ export default function ExplainPage() {
               ) : (
                 <div className="prose prose-invert prose-sm max-w-none">
                   <Streamdown className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-                    {explanation}
+                    {streamedExplanation}
                   </Streamdown>
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Chat Section - Show after explanation is generated */}
+        {explanation && (
+          <div className="mb-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-6 w-1 bg-[#EB0A1E] shadow-[0_0_10px_rgba(235,10,30,0.8)]" />
+              <h2 className="text-xl font-bold uppercase tracking-wide">
+                Ask Follow-up Questions
+              </h2>
+            </div>
+
+            {/* Chat Messages */}
+            {messages.length > 0 && (
+              <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-6 mb-4 max-h-[400px] overflow-y-auto [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-gray-900/50 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gradient-to-b [&::-webkit-scrollbar-thumb]:from-[#EB0A1E] [&::-webkit-scrollbar-thumb]:to-[#c40818] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-gray-900 hover:[&::-webkit-scrollbar-thumb]:shadow-[0_0_10px_rgba(235,10,30,0.8)]">
+                <div className="space-y-4">
+                  {messages.map((message) => (
+                    <StreamingMessage key={message.id} message={message} />
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+            )}
+
+            {/* Chat Input */}
+            <PromptInput
+              onSubmit={async (message) => {
+                await handleSendMessage(message);
+              }}
+            >
+              <PromptInputTextarea
+                placeholder="Ask a follow-up question about the data..."
+                className="resize-none overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full"
+                style={{
+                  minHeight: "48px",
+                  maxHeight: "140px",
+                  fieldSizing: "content",
+                } as any}
+              />
+              <PromptInputFooter>
+                <PromptInputSubmit
+                  disabled={isChatLoading}
+                  status={isChatLoading ? "submitted" : undefined}
+                />
+              </PromptInputFooter>
+            </PromptInput>
           </div>
         )}
       </div>

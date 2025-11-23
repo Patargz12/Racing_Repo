@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { ExcelDataRow, UploadMessage } from "./types";
 
+// Get the API URL from environment variable or use localhost
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+
 export function useDatabaseUpload() {
     const [uploading, setUploading] = useState(false);
     const [uploadMessage, setUploadMessage] = useState<UploadMessage | null>(
@@ -24,7 +27,7 @@ export function useDatabaseUpload() {
 
         try {
             // Call Express server instead of Next.js API route
-            const response = await fetch("http://localhost:4000/api/upload", {
+            const response = await fetch(`${API_URL}/upload`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
