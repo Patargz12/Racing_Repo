@@ -238,7 +238,7 @@ export default function ExplainPage() {
       formData.append("sessionId", sessionId); // Add session ID
 
       // Call backend API
-      const response = await fetch("http://localhost:4000/api/chat", {
+      const response = await fetch(`${API_URL}/chat`, {
         method: "POST",
         body: formData,
       });
