@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Toyota AI",
-  description: "Toyota AI Functionality Demo",
+  title: "Raikou",
+  description: "Raikou - Toyota Gazoo Racing Chatbot",
 };
 
 export default function RootLayout({
