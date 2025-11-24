@@ -10,13 +10,8 @@ import {
   PromptInput,
   PromptInputTextarea,
   PromptInputFooter,
-  PromptInputTools,
-  PromptInputButton,
   PromptInputSubmit,
-  PromptInputAttachments,
-  PromptInputAttachment,
 } from "@/components/ai-elements/prompt-input";
-import { Paperclip } from "lucide-react";
 
 export function ChatContainer() {
   const { messages, addMessage, removeLastMessage, getOrCreateSessionId, clearSession } = useChatStore();
@@ -56,39 +51,14 @@ export function ChatContainer() {
   const handleSendMessage = async (message?: any) => {
     // Prevent sending if already loading or chatbot is typing
     const text = message?.text || "";
-    const files = message?.files;
     
-    if (!message || isLoading || isChatbotTyping || (!text.trim() && (!files || files.length === 0))) {
+    if (!message || isLoading || isChatbotTyping || !text.trim()) {
       return;
-    }
-
-    // Convert files from Prompt Kit format to File objects
-    const processedFiles: File[] | undefined = files?.length
-      ? await Promise.all(
-          files.map(async (file: any) => {
-            // If file has a blob URL, fetch and convert to File
-            if (file.url?.startsWith("blob:")) {
-              const response = await fetch(file.url);
-              const blob = await response.blob();
-              return new File([blob], file.filename || "file", { type: file.mediaType || blob.type });
-            }
-            return null;
-          })
-        ).then((results) => results.filter((f): f is File => f !== null))
-      : undefined;
-
-    // Create user message content with file information if present
-    let messageContent = text;
-    if (processedFiles && processedFiles.length > 0) {
-      const fileNames = processedFiles.map((f) => f.name).join(", ");
-      messageContent = messageContent
-        ? `${messageContent}\n\n📎 Attached: ${fileNames}`
-        : `📎 Attached: ${fileNames}`;
     }
 
     // Add user message
     addMessage({
-      content: messageContent,
+      content: text,
       sender: "user",
     });
 
@@ -105,8 +75,8 @@ export function ChatContainer() {
       // Get or create session ID for conversation persistence
       const sessionId = getOrCreateSessionId();
       
-      // Call the backend API (with files if needed)
-      const answer = await sendChatMessage(messageContent, sessionId, processedFiles);
+      // Call the backend API
+      const answer = await sendChatMessage(text, sessionId);
 
       // Remove loading message
       removeLastMessage();
@@ -206,16 +176,9 @@ export function ChatContainer() {
             onSubmit={async (message) => {
               await handleSendMessage(message);
             }}
-            accept=".xlsx,.xls,.csv"
-            multiple
-            maxFiles={10}
-            globalDrop
           >
-            <PromptInputAttachments>
-              {(attachment) => <PromptInputAttachment data={attachment} />}
-            </PromptInputAttachments>
             <PromptInputTextarea 
-              placeholder="Type a message or drop files..." 
+              placeholder="Type a message..." 
               className="resize-none overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full"
               style={{
                 minHeight: '48px',
@@ -224,19 +187,7 @@ export function ChatContainer() {
               } as any}
             />
             <PromptInputFooter>
-              <PromptInputTools>
-                <PromptInputButton
-                  onClick={(e) => {
-                    e.preventDefault();
-                    const fileInput = document.querySelector(
-                      'input[type="file"]'
-                    ) as HTMLInputElement;
-                    fileInput?.click();
-                  }}
-                >
-                  <Paperclip className="size-4" />
-                </PromptInputButton>
-              </PromptInputTools>
+              <div />
               <PromptInputSubmit
                 disabled={isLoading || isChatbotTyping}
                 status={isLoading || isChatbotTyping ? "submitted" : undefined}

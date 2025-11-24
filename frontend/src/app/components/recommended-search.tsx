@@ -2,12 +2,12 @@ import { Card } from "@/app/components/ui/card";
 import { MessageSquare } from "lucide-react";
 
 const questions = [
-  "What are the specifications of the GR Yaris?",
-  "Tell me about the latest WRC race results",
-  "What's new in the 2024 racing season?",
-  "Compare GR Supra vs GR Corolla performance",
-  "Upcoming Toyota Gazoo Racing events",
-  "History of Toyota in motorsports",
+  "What was the position of car number 55 in GR Cup Race 1?",
+  "Show me the best lap times from Road America Race 1",
+  "What were the weather conditions during Race 1?",
+  "Compare sector times for the top 3 drivers",
+  "Who had the fastest lap in the Am class?",
+  "In GR Cup Race 1, tell me the position of number 58.",
 ];
 
 interface RecommendedQuestionsProps {
@@ -21,10 +21,10 @@ export const RecommendedQuestions = ({
     <div className="w-full max-w-4xl mx-auto px-4 py-8">
       <div className="text-center mb-8">
         <h2 className="text-2xl font-bold text-foreground mb-2">
-          Ask me anything about racing
+          Ask me about GR Cup race data
         </h2>
         <p className="text-muted-foreground">
-          Get started with these popular questions
+          Get insights from Road America Race 01 results and telemetry
         </p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

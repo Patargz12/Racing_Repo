@@ -1,13 +1,18 @@
 "use client";
 
+import Link from "next/link";
+
 interface ChatHeaderProps {
   onClearHistory?: () => void;
 }
 
 export function ChatHeader({ onClearHistory }: ChatHeaderProps) {
   return (
-    <header className="border-b border-border bg-card px-6 py-4 flex items-center justify-between">
-      <div className="flex items-center gap-3">
+    <header className="border-border bg-transparent px-6 py-4 flex items-center justify-between">
+      <Link
+        href="/"
+        className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
+      >
         {/* Logo */}
         <div className="w-8 h-8 bg-primary rounded-sm flex items-center justify-center">
           <span className="text-xs font-bold text-primary-foreground">GR</span>
@@ -21,7 +26,7 @@ export function ChatHeader({ onClearHistory }: ChatHeaderProps) {
             <p className="text-xs text-muted-foreground">Racing Assistant</p>
           </div>
         </div>
-      </div>
+      </Link>
 
       <div className="flex gap-2">
         <button
